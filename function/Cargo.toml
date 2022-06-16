@@ -1,0 +1,33 @@
+[package]
+name = "function"
+version = "0.1.0"
+edition = "2021"
+
+
+# Use cargo-edit(https://github.com/killercup/cargo-edit#installation)
+# to manage dependencies.
+# Running `cargo add DEPENDENCY_NAME` will
+# add the latest version of a dependency to the list,
+# and it will keep the alphabetic ordering for you.
+
+[dependencies]
+lambda_http = "0.5.2"
+lambda_runtime = "0.5.1"
+tokio = { version = "^1", features = ["macros"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+twilight-model = "0.11.0"
+twilight-http = "0.11.0"
+twilight-embed-builder = "0.11.0"
+twilight-util = {version = "0.11.0", features=["builder"]}
+zephyrus = {git = "https://github.com/Squidtoon99/zephyrus.git?branch=master", branch = "master"}
+deadpool-redis = {version = "^0.10", features = ["rt_tokio_1", "serde"]}
+thiserror = "1.0.31"
+ed25519-dalek = "1.0.1"
+hex = "0.4.2"
+serde_json = "1.0.81"
+lazy_static = "1.4.0"
+
+[profile.release]
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"
