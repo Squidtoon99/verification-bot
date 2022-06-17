@@ -1,5 +1,5 @@
 #![feature(async_closure)]
-use std::{env};
+use std::env;
 
 use deadpool_redis::redis::AsyncCommands;
 use lambda_http::{service_fn, Body, Error, IntoResponse, Request, RequestExt, Response};
@@ -13,21 +13,20 @@ use twilight_model::{
 };
 use zephyrus::{
     command::Command,
+    group::ParentType,
     prelude::*,
     twilight_exports::{
-        ApplicationCommand, CommandDataOption, CommandOptionType, CommandOptionValue,
-        InteractionResponseData,
+        ApplicationCommand, CommandDataOption, CommandOption, CommandOptionType,
+        CommandOptionValue, InteractionResponseData,
     },
 };
 
+mod commands;
 mod context;
 mod error;
 mod verification;
-mod commands; 
-
 use context::Context;
-// pub use commands::context::ApplicationContext;
-use error::Error as CustomError;
+pub use error::Error as CustomError;
 // pub use structs::*;
 use verification::verify_signature;
 
@@ -159,18 +158,15 @@ async fn actual_handler<'a>(
                 if execute {
                     let result = (cmd.fun)(&context).await;
 
-
                     match result {
                         Ok(inner) => inner,
-                        Err(why) => {
-                            InteractionResponse {
-                                kind: InteractionResponseType::ChannelMessageWithSource,
-                                data: Some(InteractionResponseData {
-                                    content: Some(format!("{}", why)),
-                                    ..Default::default()
-                                }),
-                            }
-                        }
+                        Err(why) => InteractionResponse {
+                            kind: InteractionResponseType::ChannelMessageWithSource,
+                            data: Some(InteractionResponseData {
+                                content: Some(format!("{}", why)),
+                                ..Default::default()
+                            }),
+                        },
                     }
                 } else {
                     InteractionResponse {
@@ -183,12 +179,12 @@ async fn actual_handler<'a>(
                 }
             } else {
                 InteractionResponse {
-                        kind: InteractionResponseType::ChannelMessageWithSource,
-                        data: Some(InteractionResponseData {
-                            content: Some("Command not found".to_string()),
-                            ..Default::default()
-                        }),
-                    }
+                    kind: InteractionResponseType::ChannelMessageWithSource,
+                    data: Some(InteractionResponseData {
+                        content: Some("Command not found".to_string()),
+                        ..Default::default()
+                    }),
+                }
             }
         }
         _ => unreachable!(),
@@ -205,12 +201,12 @@ async fn actual_handler<'a>(
 #[description = "Says hello"]
 async fn hello(ctx: &SlashContext<Context>) -> CommandResult {
     Ok(InteractionResponse {
-                kind: InteractionResponseType::ChannelMessageWithSource,
-                data: Some(InteractionResponseData {
-                    content: Some(String::from("Hello world")),
-                    ..Default::default()
-                }),
-            })
+        kind: InteractionResponseType::ChannelMessageWithSource,
+        data: Some(InteractionResponseData {
+            content: Some(String::from("Hello world")),
+            ..Default::default()
+        }),
+    })
 }
 
 #[tokio::main]
@@ -234,14 +230,49 @@ async fn main() -> Result<(), Error> {
             Id::new(std::env::var("APPLICATION_ID").unwrap().parse().unwrap()),
             context.clone(),
         )
-        .command(commands::role)
+        .group(|g| {
+            g.name("verification")
+                .description("Configuration for member verification")
+                .add_command(commands::verification::typ)
+                .add_command(commands::verification::role)
+        })
+        .group(|g| {
+            g.name("logging")
+                .description("Configuration for how the bot will log member events")
+                .add_command(commands::logging::channel)
+        })
         .build(),
     );
     {
         let mut conn = context.redis.get().await.expect("Redis connection failed");
-        let data = serde_json::to_string(&framework.commands.keys().into_iter().map(|o| o.to_string()).collect::<Vec<String>>()).unwrap();
-        let mut  update = false;
-        if let Some(val) = conn.get::<_, Option<String>>("commands").await.expect("Redis get failed") {
+        let mut options: Vec<CommandOption> = Vec::new();
+
+        for (_, cmd) in &framework.commands {
+            for i in &cmd.fun_arguments {
+                options.push(i.as_option());
+            }
+        }
+
+        for (_, group) in &framework.groups {
+            match &group.kind {
+                ParentType::Simple(data) => {
+                    for (_, cmd) in data {
+                        for i in &cmd.fun_arguments {
+                            options.push(i.as_option());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        options.sort_by_cached_key(|o| serde_json::to_string(o).unwrap());
+        let data = serde_json::to_string(&options)?;
+        let mut update = false;
+        if let Some(val) = conn
+            .get::<_, Option<String>>("commands")
+            .await
+            .expect("Redis get failed")
+        {
             if val != data {
                 update = true;
             }
@@ -250,8 +281,13 @@ async fn main() -> Result<(), Error> {
         }
 
         if update {
-            conn.set::<_, _, ()>("commands", data).await.expect("Redis set failed");
-            match framework.register_guild_commands(Id::new(639078486434381835)).await {
+            conn.set::<_, _, ()>("commands", data)
+                .await
+                .expect("Redis set failed");
+            match framework
+                .register_guild_commands(Id::new(639078486434381835))
+                .await
+            {
                 Ok(_) => {
                     println!("Registered guild commands");
                 }
@@ -261,7 +297,7 @@ async fn main() -> Result<(), Error> {
             }
         }
     }
-    
+
     let f_ref = &framework;
     lambda_http::run(service_fn(|request| async {
         function_handler(request, Arc::clone(f_ref)).await
